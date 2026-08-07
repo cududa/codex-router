@@ -9,6 +9,7 @@ configure_provider_keys=
 guided=auto
 providers=
 migrate_known=false
+adopt_native_catalog=false
 smoke_test=false
 with_tray=false
 no_tray=false
@@ -35,6 +36,7 @@ Options:
   --auto             Use configured credentials without questions
   --providers LIST   Enable comma-separated provider ids (or "configured")
   --migrate-known    Snapshot and replace recognized earlier router installs
+  --adopt-native-catalog  Explicitly adopt a valid existing native model catalog
   --smoke-test       Make one small billed request per enabled provider
   --with-tray        Also build and launch the desktop companion app
   --no-tray          Never offer the desktop companion app
@@ -153,6 +155,10 @@ while [ "$#" -gt 0 ]; do
       migrate_known=true
       shift
       ;;
+    --adopt-native-catalog)
+      adopt_native_catalog=true
+      shift
+      ;;
     --smoke-test)
       smoke_test=true
       shift
@@ -264,6 +270,7 @@ set --
 if [ "$guided" = true ]; then set -- "$@" --guided; fi
 if [ -n "$providers" ]; then set -- "$@" --providers "$providers"; fi
 if [ "$migrate_known" = true ]; then set -- "$@" --migrate-known; fi
+if [ "$adopt_native_catalog" = true ]; then set -- "$@" --adopt-native-catalog; fi
 if [ "$smoke_test" = true ]; then set -- "$@" --smoke-test; fi
 if [ "$with_tray" = true ]; then set -- "$@" --with-tray; fi
 if [ "$no_tray" = true ]; then set -- "$@" --no-tray; fi

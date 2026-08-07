@@ -7,7 +7,17 @@ case "${MODEL_ROUTER_TARGET:-codex}" in
   codex) ;;
   *) echo "MODEL_ROUTER_TARGET must be codex." >&2; exit 2 ;;
 esac
-node src/legacy-migration.mjs assert-clear >/dev/null
+adopt_native_catalog=false
+for argument in "$@"; do
+  case "$argument" in
+    --adopt-native-catalog) adopt_native_catalog=true ;;
+    *) echo "Usage: $0 [--adopt-native-catalog]" >&2; exit 2 ;;
+  esac
+done
+legacy_args="assert-clear"
+if [ "$adopt_native_catalog" = true ]; then legacy_args="$legacy_args --adopt-native-catalog"; fi
+# shellcheck disable=SC2086
+node src/legacy-migration.mjs $legacy_args >/dev/null
 config_manager=src/config-manager.mjs
 node src/provider-selection.mjs ensure-configured >/dev/null
 node src/secret.mjs ensure
@@ -18,7 +28,10 @@ rollback() {
   node "$config_manager" disable >/dev/null 2>&1 || true
 }
 trap rollback EXIT HUP INT TERM
-node "$config_manager" enable
+config_args="enable"
+if [ "$adopt_native_catalog" = true ]; then config_args="$config_args --adopt-native-catalog"; fi
+# shellcheck disable=SC2086
+node "$config_manager" $config_args
 node src/service.mjs install
 node src/wait-health.mjs
 trap - EXIT HUP INT TERM

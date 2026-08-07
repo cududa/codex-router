@@ -147,6 +147,20 @@ Noninteractive setup can reuse already configured credentials:
 ./install.sh --auto --providers configured --migrate-known
 ```
 
+If another compatible router already owns a valid native Codex catalog, setup
+refuses to replace it by default. After reviewing that catalog, opt into
+adoption explicitly:
+
+```sh
+./install.sh --auto --providers configured --adopt-native-catalog
+```
+
+On Windows, use `-AdoptNativeCatalog` with `install.ps1`. The original catalog
+path is retained in protected router state, used as the native source while
+the merged catalog is built, and restored when the router is disabled. Invalid
+catalogs, catalogs containing routed model slugs, and ambiguous ownership are
+still refused.
+
 Or choose an exact set:
 
 ```sh
@@ -218,7 +232,8 @@ stores the original config with protected permissions. Restore it with:
 ```
 
 An unknown catalog owner requires a manual decision; automatic setup stops
-without changing it.
+without changing it. A valid native catalog may instead be reviewed and
+adopted with the explicit `--adopt-native-catalog` option described above.
 
 ## Restart and verify
 

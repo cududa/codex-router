@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import { redactCallerUrl } from "./caller-auth.mjs";
 import { protectPrivateFile } from "./file-security.mjs";
+import { readNativeCatalogFile, writeNativeCatalogSource } from "./native-catalog-source.mjs";
 import {
   CODEX_HOME,
   CONFIG_PATH,
@@ -65,12 +66,23 @@ function serviceLoaded(label) {
 function rootValues(contents, key) {
   const firstTable = contents.search(/^\s*\[/m);
   const root = firstTable === -1 ? contents : contents.slice(0, firstTable);
-  // The pattern is built in a template literal, so every backslash meant for
-  // the regex has to survive JavaScript's own escaping first: a bare `\s`
-  // collapses to a literal "s" and the pattern silently stops matching any
-  // entry that is indented or spaced around the "=".
-  return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, "gm"))]
-    .map((match) => match[1]);
+  return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=\\s*(.+)$`, "gm"))]
+    .map((match) => match[1].trim())
+    .map((raw) => {
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        try {
+          const value = JSON.parse(raw);
+          if (typeof value === "string") return value;
+        } catch {
+          // Fall through to the conservative quoted-string parser.
+        }
+      }
+      return raw.startsWith("\"") && raw.endsWith("\"")
+        ? raw.slice(1, -1)
+        : raw.startsWith("'") && raw.endsWith("'")
+          ? raw.slice(1, -1)
+          : raw;
+    });
 }
 
 // TOML basic strings escape backslashes as "\\". Config values read here are
@@ -131,10 +143,16 @@ export function detectLegacyInstallations() {
     (catalog) => ![...knownCatalogs].some((known) => catalogPathsEqual(catalog, known)),
   );
   const unknownConflict = Boolean(unknownCatalog);
+  const adoptableNativeCatalog = Boolean(
+    unknownCatalog &&
+      !openaiBaseUrls.length &&
+      readNativeCatalogFile(unknownCatalog),
+  );
 
   return {
     installations,
     unknownConflict,
+    adoptableNativeCatalog,
     config: {
       openaiBaseUrl: openaiBaseUrls[0]
         ? redactCallerUrl(openaiBaseUrls[0])
@@ -318,9 +336,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else if (command === "assert-clear") {
       const detected = detectLegacyInstallations();
       if (detected.unknownConflict) {
+        if (
+          process.argv.includes("--adopt-native-catalog") &&
+          detected.adoptableNativeCatalog
+        ) {
+          writeNativeCatalogSource(detected.config.modelCatalogJson);
+        } else {
         throw new Error(
           `Another router owns ${detected.config.modelCatalogJson}; it must be handled manually.`,
         );
+        }
       }
       if (detected.installations.length) {
         throw new Error(
@@ -334,7 +359,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       process.stdout.write(`${JSON.stringify(rollbackLatestMigration(), null, 2)}\n`);
     } else {
       console.error(
-        "Usage: legacy-migration.mjs detect|assert-clear|apply --yes|rollback --yes",
+        "Usage: legacy-migration.mjs detect|assert-clear [--adopt-native-catalog]|apply --yes|rollback --yes",
       );
       process.exitCode = 2;
     }

@@ -4,6 +4,7 @@ set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 prepare_only=false
 migrate_known=false
+adopt_native_catalog=false
 force_deps=false
 target=${MODEL_ROUTER_TARGET:-codex}
 
@@ -22,8 +23,9 @@ for argument in "$@"; do
   case "$argument" in
     --prepare-only) prepare_only=true ;;
     --migrate-known) migrate_known=true ;;
+    --adopt-native-catalog) adopt_native_catalog=true ;;
     --force-deps) force_deps=true ;;
-    *) echo "Usage: $0 [--prepare-only] [--migrate-known] [--force-deps]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--prepare-only] [--migrate-known] [--adopt-native-catalog] [--force-deps]" >&2; exit 2 ;;
   esac
 done
 
@@ -56,7 +58,10 @@ mkdir -p "$codex_home"
 if [ "$migrate_known" = true ]; then
   node src/legacy-migration.mjs apply --yes >/dev/null
 else
-  node src/legacy-migration.mjs assert-clear >/dev/null
+  legacy_args="assert-clear"
+  if [ "$adopt_native_catalog" = true ]; then legacy_args="$legacy_args --adopt-native-catalog"; fi
+  # shellcheck disable=SC2086
+  node src/legacy-migration.mjs $legacy_args >/dev/null
 fi
 if [ "$prepare_only" != true ]; then
   node src/provider-selection.mjs ensure-configured >/dev/null
@@ -127,12 +132,17 @@ rollback() {
   fi
   if [ "$config_enabled" = true ]; then
     node "$config_manager" disable >/dev/null 2>&1 || true
+  elif [ "$adopt_native_catalog" = true ]; then
+    node -e 'import("./src/native-catalog-source.mjs").then(({ clearNativeCatalogSource }) => clearNativeCatalogSource())' >/dev/null 2>&1 || true
   fi
 }
 trap rollback EXIT HUP INT TERM
 
 config_enabled=true
-node "$config_manager" enable
+config_args="enable"
+if [ "$adopt_native_catalog" = true ]; then config_args="$config_args --adopt-native-catalog"; fi
+# shellcheck disable=SC2086
+node "$config_manager" $config_args
 service_installed=true
 node src/service.mjs install
 node src/wait-health.mjs

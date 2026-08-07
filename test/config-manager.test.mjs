@@ -731,3 +731,69 @@ test("model_catalog_json accepts apostrophes and backslashes in the path", () =>
     rmSync(codexHome, { recursive: true, force: true });
   }
 });
+
+test("config manager adopts and restores a valid foreign native catalog", () => {
+  const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-adopt-catalog-"));
+  const stateDir = path.join(codexHome, "router-state");
+  const configPath = path.join(codexHome, "config.toml");
+  const foreignCatalog = path.join(codexHome, "other-router", "native-models.json");
+  mkdirSync(path.dirname(foreignCatalog), { recursive: true });
+  writeFileSync(
+    foreignCatalog,
+    JSON.stringify({ models: [{ slug: "gpt-native", capabilities: {} }] }),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    configPath,
+    `model = "gpt-native"\nmodel_catalog_json = ${JSON.stringify(foreignCatalog)}\n`,
+    { mode: 0o600 },
+  );
+
+  try {
+    const enabled = run("enable", codexHome, stateDir, ["--adopt-native-catalog"]);
+    assert.equal(enabled.mode, "router");
+    const configured = readFileSync(configPath, "utf8");
+    assert.equal(
+      configured.includes(`model_catalog_json = ${JSON.stringify(path.join(stateDir, "merged-models.json"))}`),
+      true,
+    );
+    const sourceState = JSON.parse(
+      readFileSync(path.join(stateDir, "native-catalog-source.json"), "utf8"),
+    );
+    assert.equal(sourceState.path, foreignCatalog);
+
+    const disabled = run("disable", codexHome, stateDir);
+    assert.equal(disabled.mode, "native");
+    assert.equal(
+      readFileSync(configPath, "utf8").includes(
+        `model_catalog_json = ${JSON.stringify(foreignCatalog)}`,
+      ),
+      true,
+    );
+    assert.equal(existsSync(path.join(stateDir, "native-catalog-source.json")), false);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("config manager refuses adoption of an invalid foreign catalog", () => {
+  const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-invalid-catalog-"));
+  const configPath = path.join(codexHome, "config.toml");
+  const foreignCatalog = path.join(codexHome, "other-router", "native-models.json");
+  mkdirSync(path.dirname(foreignCatalog), { recursive: true });
+  writeFileSync(foreignCatalog, JSON.stringify({ models: [] }), { mode: 0o600 });
+  writeFileSync(
+    configPath,
+    `model = "gpt-native"\nmodel_catalog_json = ${JSON.stringify(foreignCatalog)}\n`,
+    { mode: 0o600 },
+  );
+
+  try {
+    assert.throws(
+      () => run("enable", codexHome, undefined, ["--adopt-native-catalog"]),
+      /Refusing to adopt an invalid native model catalog/,
+    );
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});

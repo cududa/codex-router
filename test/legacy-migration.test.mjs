@@ -97,6 +97,27 @@ test("a foreign catalog is an unknown conflict at any TOML spacing", () => {
   }
 });
 
+test("a valid foreign catalog is explicitly adoptable", () => {
+  mkdirSync(codexHome, { recursive: true });
+  const configPath = path.join(codexHome, "config.toml");
+  const foreign = path.join(testRoot, "adoptable-router", "merged-models.json");
+  mkdirSync(path.dirname(foreign), { recursive: true });
+  writeFileSync(foreign, JSON.stringify({ models: [{ slug: "gpt-native" }] }), { mode: 0o600 });
+  writeFileSync(
+    configPath,
+    `model = "gpt-native"\nmodel_catalog_json = ${JSON.stringify(foreign)}\n`,
+    { mode: 0o600 },
+  );
+
+  try {
+    const detected = detectLegacyInstallations();
+    assert.equal(detected.unknownConflict, true);
+    assert.equal(detected.adoptableNativeCatalog, true);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
 test("Windows-style escaped catalog paths are not unknown conflicts", () => {
   mkdirSync(codexHome, { recursive: true });
   const configPath = path.join(codexHome, "config.toml");
