@@ -8,9 +8,19 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function render(script, platform, testRoot, target = "codex", sourceRoot = root) {
+function render(
+  script,
+  platform,
+  testRoot,
+  target = "codex",
+  sourceRoot = root,
+  renderArgs = [],
+) {
   const nodeArgs = sourceRoot === root ? [] : ["--preserve-symlinks", "--preserve-symlinks-main"];
-  return execFileSync(process.execPath, [...nodeArgs, path.join(sourceRoot, "src", script), "render"], {
+  return execFileSync(
+    process.execPath,
+    [...nodeArgs, path.join(sourceRoot, "src", script), "render", ...renderArgs],
+    {
     cwd: sourceRoot,
     encoding: "utf8",
     env: {
@@ -22,7 +32,8 @@ function render(script, platform, testRoot, target = "codex", sourceRoot = root)
       CODEX_ROUTER_SERVICE_PLATFORM: platform,
       XDG_CONFIG_HOME: path.join(testRoot, "xdg config"),
     },
-  });
+    },
+  );
 }
 
 test("background service definitions render for macOS, Linux, and Windows", () => {
@@ -45,6 +56,31 @@ test("background service definitions render for macOS, Linux, and Windows", () =
     // console code page is not UTF-8 (see service-windows.mjs).
     assert.match(windows, /set "PYTHONIOENCODING=utf-8"/);
     assert.match(windows, /set "PYTHONUTF8=1"/);
+
+    const launcher = render("service-windows.mjs", "win32", testRoot, "codex", root, [
+      "--launcher",
+    ]);
+    assert.match(launcher, /CreateObject\("WScript\.Shell"\)/);
+    assert.match(launcher, /shell\.Run\(/);
+
+    const hiddenAction = JSON.parse(
+      render("service-windows.mjs", "win32", testRoot, "codex", root, ["--action"]),
+    );
+    assert.equal(hiddenAction.executable, "wscript.exe");
+    assert.match(hiddenAction.arguments, /start-codex-router\.vbs/);
+
+    const visibleAction = JSON.parse(
+      render(
+        "service-windows.mjs",
+        "win32",
+        testRoot,
+        "codex",
+        root,
+        ["--action", "--visible"],
+      ),
+    );
+    assert.equal(visibleAction.executable, "cmd.exe");
+    assert.match(visibleAction.arguments, /start-codex-router\.cmd/);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

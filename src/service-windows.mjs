@@ -19,8 +19,10 @@ import {
 
 const effectivePlatform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
 const command = process.argv[2] || "status";
+const visible = process.argv.includes("--visible");
 const taskName = "Codex Router";
 const wrapperPath = path.join(STATE_DIR, "start-codex-router.cmd");
+const launcherPath = path.join(STATE_DIR, "start-codex-router.vbs");
 
 if (effectivePlatform !== "win32" && command !== "render") {
   throw new Error("The Task Scheduler service manager runs on Windows only.");
@@ -60,6 +62,27 @@ function wrapper() {
     .join("\r\n")}\r\n"${cmdEscape(process.execPath)}" "${cmdEscape(start)}" >> "${cmdEscape(LOG_PATH)}" 2>&1\r\n`;
 }
 
+function launcher() {
+  const escapedWrapperPath = wrapperPath.replaceAll('"', '""');
+  return [
+    'Set shell = CreateObject("WScript.Shell")',
+    `WScript.Quit shell.Run("""${escapedWrapperPath}""", 0, True)`,
+    "",
+  ].join("\r\n");
+}
+
+function taskAction({ visible: showWindow = false } = {}) {
+  return showWindow
+    ? {
+        executable: "cmd.exe",
+        arguments: `/D /C ""${wrapperPath}""`,
+      }
+    : {
+        executable: "wscript.exe",
+        arguments: `//B //Nologo "${launcherPath}"`,
+      };
+}
+
 function schtasks(args, options = {}) {
   return execFileSync("schtasks.exe", args, {
     encoding: "utf8",
@@ -72,11 +95,18 @@ function writeWrapper() {
   const temporary = `${wrapperPath}.tmp.${process.pid}`;
   writeFileSync(temporary, wrapper(), "utf8");
   renameSync(temporary, wrapperPath);
+  const launcherTemporary = `${launcherPath}.tmp.${process.pid}`;
+  writeFileSync(launcherTemporary, launcher(), "utf8");
+  renameSync(launcherTemporary, launcherPath);
 }
 
 function installTask() {
+  const action = taskAction({ visible });
+  const actionScript = visible
+    ? "$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/D /C \"\"' + $env:CODEX_ROUTER_WRAPPER + '\"\"')"
+    : "$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('//B //Nologo \"' + $env:CODEX_ROUTER_LAUNCHER + '\"')";
   const script = [
-    "$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/D /C \"\"' + $env:CODEX_ROUTER_WRAPPER + '\"\"')",
+    actionScript,
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)",
     "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew",
     "$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited",
@@ -91,14 +121,15 @@ function installTask() {
           ...process.env,
           CODEX_ROUTER_TASK: taskName,
           CODEX_ROUTER_WRAPPER: wrapperPath,
+          CODEX_ROUTER_LAUNCHER: launcherPath,
         },
         stdio: ["ignore", "ignore", "ignore"],
       },
     );
   } catch {
-    const action = `cmd.exe /D /C ""${wrapperPath}""`;
+    const fallback = `${action.executable} ${action.arguments}`;
     schtasks(
-      ["/Create", "/TN", taskName, "/SC", "ONLOGON", "/TR", action, "/RL", "LIMITED", "/F"],
+      ["/Create", "/TN", taskName, "/SC", "ONLOGON", "/TR", fallback, "/RL", "LIMITED", "/F"],
       { quiet: true },
     );
   }
@@ -126,12 +157,19 @@ function taskState() {
 }
 
 if (!new Set(["install", "uninstall", "start", "stop", "restart", "status", "render"]).has(command)) {
-  console.error("Usage: service-windows.mjs install|uninstall|start|stop|restart|status|render");
+  console.error("Usage: service-windows.mjs install|uninstall|start|stop|restart|status|render [--visible|--launcher|--action]");
   process.exit(2);
 }
 
 if (command === "render") {
-  process.stdout.write(wrapper());
+  const renderMode = process.argv[3];
+  if (renderMode === "--launcher") {
+    process.stdout.write(launcher());
+  } else if (renderMode === "--action") {
+    process.stdout.write(`${JSON.stringify(taskAction({ visible }))}\n`);
+  } else {
+    process.stdout.write(wrapper());
+  }
 } else if (command === "install") {
   writeWrapper();
   installTask();
@@ -149,6 +187,7 @@ if (command === "render") {
     // The task may not exist.
   }
   if (existsSync(wrapperPath)) unlinkSync(wrapperPath);
+  if (existsSync(launcherPath)) unlinkSync(launcherPath);
   process.stdout.write(`${JSON.stringify({ installed: false })}\n`);
 } else if (command === "status") {
   let installed = false;
