@@ -165,9 +165,9 @@ foreground commands but is not copied into launchd, systemd, or Task Scheduler.
 Use `provider-key ... set` so the per-user background service has persistent,
 protected access.
 
-On Windows, the managed Task Scheduler service starts through a hidden
-`wscript.exe` launcher so normal installs do not flash a console window. The
-underlying `.cmd` wrapper remains available for diagnostics; run
+On Windows, the managed Task Scheduler service runs in the background through
+a small `wscript.exe` launcher, so normal installs do not open a console
+window. The underlying `.cmd` wrapper remains available for diagnostics; run
 `node src/service.mjs install --visible` only when intentionally debugging the
 service in an interactive session.
 
