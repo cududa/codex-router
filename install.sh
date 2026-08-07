@@ -12,6 +12,7 @@ migrate_known=false
 smoke_test=false
 with_tray=false
 no_tray=false
+windows_user_environment=
 previous_revision=
 force=false
 target=codex
@@ -40,6 +41,8 @@ Options:
   --no-tray          Never offer the desktop companion app
   --force            Discard edits to tracked files in the managed checkout
                      before updating it. Untracked files are never touched.
+  --windows-user-environment  Allow Windows user-environment credential lookup
+  --no-windows-user-environment  Disable Windows user-environment lookup
   -h, --help          Show this help
 
 When run from a checkout, this script installs that checkout. When piped from
@@ -147,6 +150,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-tray)
       no_tray=true
+      shift
+      ;;
+    --windows-user-environment)
+      windows_user_environment=true
+      shift
+      ;;
+    --no-windows-user-environment)
+      windows_user_environment=false
       shift
       ;;
     --migrate-known)
@@ -267,6 +278,8 @@ if [ "$migrate_known" = true ]; then set -- "$@" --migrate-known; fi
 if [ "$smoke_test" = true ]; then set -- "$@" --smoke-test; fi
 if [ "$with_tray" = true ]; then set -- "$@" --with-tray; fi
 if [ "$no_tray" = true ]; then set -- "$@" --no-tray; fi
+if [ "$windows_user_environment" = true ]; then set -- "$@" --windows-user-environment; fi
+if [ "$windows_user_environment" = false ]; then set -- "$@" --no-windows-user-environment; fi
 setup_status=0
 "$repo_dir/bin/setup" "$@" || setup_status=$?
 # Exit 2 means setup left configuration unfinished (a declined prompt, a

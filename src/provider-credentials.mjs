@@ -16,6 +16,7 @@ import {
   readCliSessionCredential,
 } from "./cli-session-credential.mjs";
 import { protectPrivateFile } from "./file-security.mjs";
+import { windowsUserEnvironmentEnabled } from "./credential-source-policy.mjs";
 import { LEGACY_STATE_DIRS, STATE_DIR, TARGET } from "./paths.mjs";
 import { targetCli } from "./target-integration.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
@@ -124,6 +125,46 @@ function keyFromKeychain(provider) {
   return undefined;
 }
 
+export function parseWindowsUserEnvironmentValue(output, name) {
+  const escapedName = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const line = String(output)
+    .split(/\r?\n/)
+    .find((candidate) =>
+      new RegExp(`^\\s*${escapedName}\\s+REG_\\S+\\s+(.+?)\\s*$`, "i").test(candidate),
+    );
+  if (!line) return undefined;
+  const match = line.match(
+    new RegExp(`^\\s*${escapedName}\\s+REG_\\S+\\s+(.+?)\\s*$`, "i"),
+  );
+  return match?.[1]?.trim() || undefined;
+}
+
+export function readWindowsUserEnvironmentValue(name, runner = execFileSync) {
+  if (process.platform !== "win32" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    return undefined;
+  }
+  try {
+    const output = runner(
+      "reg.exe",
+      ["query", "HKCU\\Environment", "/v", name],
+      { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const value = parseWindowsUserEnvironmentValue(output, name);
+    return value ? { value, source: `Windows user environment (${name})` } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function keyFromWindowsUserEnvironment(provider) {
+  if (process.platform !== "win32" || !windowsUserEnvironmentEnabled()) return undefined;
+  for (const name of provider.credential.environment) {
+    const credential = readWindowsUserEnvironmentValue(name);
+    if (credential) return credential;
+  }
+  return undefined;
+}
+
 export function resolveProviderCredential(providerOrId, options = {}) {
   const provider =
     typeof providerOrId === "string" ? apiProvider(providerOrId) : providerOrId;
@@ -146,6 +187,10 @@ export function resolveProviderCredential(providerOrId, options = {}) {
     if (value) {
       return { value, source: `protected file (${candidate})`, persistent: true };
     }
+  }
+  const windowsUserEnvironment = keyFromWindowsUserEnvironment(provider);
+  if (windowsUserEnvironment) {
+    return { ...windowsUserEnvironment, persistent: true };
   }
   const keychain = keyFromKeychain(provider);
   if (keychain) return { ...keychain, persistent: true };

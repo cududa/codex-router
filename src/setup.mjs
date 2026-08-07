@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { cliSessionDescriptor } from "./cli-session-credential.mjs";
+import { writeCredentialSourcePolicy } from "./credential-source-policy.mjs";
 import { detectLegacyInstallations, applyKnownMigrations, rollbackLatestMigration } from "./legacy-migration.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
@@ -38,6 +39,8 @@ const runSmoke = args.includes("--smoke-test");
 const selectionOnly = args.includes("--selection-only");
 const withTray = args.includes("--with-tray");
 const noTray = args.includes("--no-tray");
+const enableWindowsUserEnvironment = args.includes("--windows-user-environment");
+const disableWindowsUserEnvironment = args.includes("--no-windows-user-environment");
 
 const flagOptions = new Set([
   "--guided",
@@ -47,6 +50,8 @@ const flagOptions = new Set([
   "--selection-only",
   "--with-tray",
   "--no-tray",
+  "--windows-user-environment",
+  "--no-windows-user-environment",
   "--help",
 ]);
 let setupArgumentError;
@@ -95,6 +100,8 @@ Options:
   --auto               Use already configured credentials (default)
   --providers LIST     Comma-separated provider ids
   --migrate-known      Safely migrate recognized earlier Codex Router installs
+  --windows-user-environment  Allow Windows user-environment credential lookup
+  --no-windows-user-environment  Disable Windows user-environment lookup
   --smoke-test         Make one small live request per enabled provider
   --selection-only     Save provider selection without installing (development)
   --with-tray          Also build and launch the desktop companion app
@@ -306,6 +313,15 @@ function installTray() {
 
 async function main() {
   if (setupArgumentError) throw incomplete(setupArgumentError);
+  if (enableWindowsUserEnvironment && disableWindowsUserEnvironment) {
+    throw incomplete("Choose either --windows-user-environment or --no-windows-user-environment.");
+  }
+  if (enableWindowsUserEnvironment && process.platform !== "win32") {
+    throw incomplete("--windows-user-environment is available only on Windows.");
+  }
+  if (enableWindowsUserEnvironment || disableWindowsUserEnvironment) {
+    writeCredentialSourcePolicy({ windowsUserEnvironment: enableWindowsUserEnvironment });
+  }
   const legacy = detectLegacyInstallations();
   if (legacy.unknownConflict) {
     throw incomplete(

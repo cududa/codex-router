@@ -9,6 +9,8 @@ param(
   [switch]$Auto,
   [string]$Providers,
   [switch]$MigrateKnown,
+  [switch]$WindowsUserEnvironment,
+  [switch]$NoWindowsUserEnvironment,
   [switch]$SmokeTest,
   # Discards tracked edits in the managed checkout so the update can proceed.
   # Deliberately never touches untracked files -- see Reset-ManagedCheckout.
@@ -23,6 +25,9 @@ $ErrorActionPreference = "Stop"
 $env:MODEL_ROUTER_TARGET = $Target
 if ($Target -ne "codex" -and $MigrateKnown) {
   throw "-MigrateKnown applies only to the Codex target."
+}
+if ($WindowsUserEnvironment -and $NoWindowsUserEnvironment) {
+  throw "Choose either -WindowsUserEnvironment or -NoWindowsUserEnvironment."
 }
 $PreviousRevision = $null
 $RepositoryUrl = if ($env:CODEX_ROUTER_REPOSITORY_URL) {
@@ -163,6 +168,8 @@ if (-not $CheckoutInstall) {
   if ($UseGuided) { $SetupArguments += "--guided" }
   if ($Providers) { $SetupArguments += @("--providers", $Providers) }
   if ($MigrateKnown) { $SetupArguments += "--migrate-known" }
+  if ($WindowsUserEnvironment) { $SetupArguments += "--windows-user-environment" }
+  if ($NoWindowsUserEnvironment) { $SetupArguments += "--no-windows-user-environment" }
   if ($SmokeTest) { $SetupArguments += "--smoke-test" }
   & node @SetupArguments
   $SetupExitCode = $LASTEXITCODE

@@ -21,11 +21,18 @@ for (const name of ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "MO
 const {
   credentialFileMode,
   keychainProbeCount,
+  parseWindowsUserEnvironmentValue,
+  readWindowsUserEnvironmentValue,
   removeProviderCredential,
   resetKeychainCache,
   resolveProviderCredential,
   writeProviderCredential,
 } = await import("../src/provider-credentials.mjs");
+const {
+  readCredentialSourcePolicy,
+  windowsUserEnvironmentEnabled,
+  writeCredentialSourcePolicy,
+} = await import("../src/credential-source-policy.mjs");
 const { privateFileIsProtected } = await import("../src/file-security.mjs");
 
 test("provider credentials use protected files and remove legacy managed keys", () => {
@@ -117,3 +124,45 @@ test(
     );
   },
 );
+
+test("Windows user-environment values are parsed without exposing unrelated data", () => {
+  const output = [
+    "HKEY_CURRENT_USER\\Environment",
+    "    DEEPSEEK_API_KEY    REG_EXPAND_SZ    TEST_WINDOWS_KEY",
+    "    OTHER_VALUE         REG_SZ           not-for-this-provider",
+  ].join("\r\n");
+  assert.equal(
+    parseWindowsUserEnvironmentValue(output, "DEEPSEEK_API_KEY"),
+    "TEST_WINDOWS_KEY",
+  );
+  assert.equal(parseWindowsUserEnvironmentValue(output, "MISSING_KEY"), undefined);
+  assert.equal(parseWindowsUserEnvironmentValue(output, "bad name"), undefined);
+
+  if (process.platform === "win32") {
+    const calls = [];
+    const credential = readWindowsUserEnvironmentValue("DEEPSEEK_API_KEY", (...args) => {
+      calls.push(args);
+      return output;
+    });
+    assert.deepEqual(credential, {
+      value: "TEST_WINDOWS_KEY",
+      source: "Windows user environment (DEEPSEEK_API_KEY)",
+    });
+    assert.deepEqual(calls[0][1], ["query", "HKCU\\Environment", "/v", "DEEPSEEK_API_KEY"]);
+  }
+});
+
+test("Windows user-environment lookup is an explicit protected policy", () => {
+  try {
+    assert.equal(windowsUserEnvironmentEnabled(), false);
+    writeCredentialSourcePolicy({ windowsUserEnvironment: true });
+    assert.equal(readCredentialSourcePolicy().windowsUserEnvironment, true);
+    assert.equal(windowsUserEnvironmentEnabled(), true);
+    assert.equal(privateFileIsProtected(path.join(process.env.CODEX_ROUTER_STATE_DIR, "credential-sources.json")), true);
+
+    writeCredentialSourcePolicy({ windowsUserEnvironment: false });
+    assert.equal(windowsUserEnvironmentEnabled(), false);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});

@@ -165,6 +165,15 @@ foreground commands but is not copied into launchd, systemd, or Task Scheduler.
 Use `provider-key ... set` so the per-user background service has persistent,
 protected access.
 
+On Windows, an environment variable stored in the current user's
+`HKCU\Environment` is not always visible to a per-user scheduled task until a
+new logon. The default credential lookup does not read that registry location.
+Review the security implications before opting in with
+`--windows-user-environment`; use `--no-windows-user-environment` to turn it
+back off. The setting is protected target policy, and the provider registry
+remains the allowlist for variable names. Credential values are never printed
+or stored by the router.
+
 ## Installer transaction
 
 Setup performs these operations in order:
