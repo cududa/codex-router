@@ -101,6 +101,21 @@ test("routed models advertise search and image detail only when the registry opt
   assert.equal(capable.supports_image_detail_original, true);
 });
 
+test("routed models advertise service tiers only when the registry opts in", () => {
+  // Default stays empty: the client must not send a tier the provider rejects.
+  const plain = routedModel(template, grok);
+  assert.deepEqual(plain.service_tiers, []);
+  const tiered = routedModel(template, {
+    ...grok,
+    serviceTiers: [
+      { id: "priority", name: "Priority", description: "  Guaranteed throughput.  " },
+    ],
+  });
+  assert.deepEqual(tiered.service_tiers, [
+    { id: "priority", name: "Priority", description: "Guaranteed throughput." },
+  ]);
+});
+
 test("routed models inherit apply_patch unless the registry opts out", () => {
   const plain = routedModel(template, grok);
   assert.equal(plain.apply_patch_tool_type, "freeform");

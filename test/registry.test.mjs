@@ -431,6 +431,40 @@ test("a checked-in upgrade prompt with an unresolvable target fails the registry
   }
 });
 
+// An advertised service tier lets the client attach `service_tier` to routed
+// requests, so only ids the provider honors may be declared. A malformed entry
+// must fail the registry load rather than reach the catalog.
+test("serviceTiers must be objects with a non-empty id and name", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = (await import("node:path")).default;
+  const { spawnSync } = await import("node:child_process");
+  const dir = mkdtempSync(path.join(tmpdir(), "registry-service-tiers-test-"));
+  const load = (serviceTiers) => {
+    const registry = readRegistryDocument("config");
+    registry.models = [
+      { ...registry.models[0], serviceTiers },
+      ...registry.models.slice(1),
+    ];
+    const registryPath = path.join(dir, "providers.json");
+    writeFileSync(registryPath, JSON.stringify(registry));
+    return spawnSync(
+      process.execPath,
+      ["-e", "import('./src/model-registry.mjs').catch((e)=>{console.error(e.message);process.exit(1);})"],
+      { encoding: "utf8", env: { ...process.env, MODEL_ROUTER_REGISTRY: registryPath } },
+    );
+  };
+  try {
+    assert.match(load([{ id: " ", name: "Priority" }]).stderr, /invalid serviceTiers/);
+    assert.match(load([{ id: "priority" }]).stderr, /invalid serviceTiers/);
+    assert.match(load("priority").stderr, /invalid serviceTiers/);
+    const valid = load([{ id: "priority", name: "Priority" }]);
+    assert.equal(valid.status, 0, valid.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // A keyless provider skips the credential requirement, which is only safe
 // because it cannot reach off-box. Both halves of that bargain are enforced.
 test("a keyless provider must be loopback and must not carry a credential", async () => {
