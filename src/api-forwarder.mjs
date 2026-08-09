@@ -330,6 +330,9 @@ function normalizeBody(buffer, contentType, route) {
     delete payload.store;
     delete payload.logit_bias;
   }
+  // Fireworks rejects the OpenAI-shaped search parameter rather than ignoring
+  // it, even though the local Codex surface accepts it.
+  if (provider?.id === "fireworks") delete payload.web_search_options;
   if (Array.isArray(payload.messages)) {
     payload.messages = sanitizeChatToolHistory(payload.messages, provider);
   }

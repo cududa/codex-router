@@ -1133,6 +1133,9 @@ async function summarize(request, payload, route, signal) {
   };
   delete body.previous_response_id;
   delete body.client_metadata;
+  // Compaction re-enters the same providers as a routed turn; Fireworks
+  // rejects the search parameter here too.
+  if (providerForModel(route)?.id === "fireworks") delete body.web_search_options;
   const upstream = await fetch(`${GATEWAY_BASE}/responses`, {
     method: "POST",
     headers: routedHeaders(),
@@ -1383,6 +1386,9 @@ async function handleResponses(request, response, requestUrl) {
         delete routed.reasoning;
         delete routed.reasoning_effort;
       }
+      // Fireworks rejects the OpenAI-shaped search parameter that Codex sends;
+      // other providers tolerate it, so drop it only on the Fireworks route.
+      if (provider?.id === "fireworks") delete routed.web_search_options;
       target = `${GATEWAY_BASE}/responses`;
       headers = routedHeaders();
       routedBody = Buffer.from(JSON.stringify(routed), "utf8");
