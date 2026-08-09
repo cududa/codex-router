@@ -377,7 +377,13 @@ test("login-free aliasing applies even when a ChatGPT credential is still stored
           env: {
             ...process.env,
             CODEX_HOME: stateDir,
-            CODEX_BIN: "/usr/bin/true",
+          // process.execPath is a runnable binary on every platform and yields
+          // an empty catalog, so the seeded native-models.json is reused.
+          // "/usr/bin/true" does not exist on Windows, where findCodexBinary()
+          // would fall through to a real Codex install and capture its catalog
+          // (adding native slugs such as gpt-5.6-terra and breaking the exact
+          // alias assertion below).
+          CODEX_BIN: process.execPath,
             MODEL_ROUTER_TARGET: "codex",
             MODEL_ROUTER_STATE_DIR: stateDir,
           },
