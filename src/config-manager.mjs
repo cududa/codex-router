@@ -35,6 +35,11 @@ import {
   PORTS,
   loopback,
 } from "./paths.mjs";
+import {
+  clearNativeCatalogSource,
+  readNativeCatalogSource,
+  writeNativeCatalogSource,
+} from "./native-catalog-source.mjs";
 
 const legacyRouterBaseUrl = loopback(PORTS.router, "/v1");
 const startMarker = "# BEGIN codex-router-managed";
@@ -69,6 +74,7 @@ const markerPairs = [
   ["# BEGIN kimi-codex-proxy-managed", "# END kimi-codex-proxy-managed"],
 ];
 const command = process.argv[2] || "status";
+const adoptNativeCatalog = process.argv.includes("--adopt-native-catalog");
 
 function configuredRouterBaseUrl() {
   if (!existsSync(CALLER_SECRET_PATH)) {
@@ -396,6 +402,14 @@ function rootHasValue(lines, key) {
   return lines.some((line) => new RegExp(`^\\s*${key}\\s*=`).test(line));
 }
 
+function catalogPathsEqual(left, right) {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
 function nativeRealtimeCallBaseUrl(lines) {
   const chatgptBaseUrl = (
     rootValue(lines, "chatgpt_base_url") || defaultChatgptBaseUrl
@@ -584,7 +598,7 @@ function enabledContents(contents) {
   }
   const routerBaseUrl = configuredRouterBaseUrl();
   const cleaned = clean(contentsWithoutLegacyProvider);
-  const rootLines = trimBlankEdges(cleaned.rootLines);
+  let rootLines = trimBlankEdges(cleaned.rootLines);
   const existingBase = rootValue(rootLines, "openai_base_url");
   const existingCatalog = rootValue(rootLines, "model_catalog_json");
   if (existingBase && existingBase !== routerBaseUrl) {
@@ -593,7 +607,19 @@ function enabledContents(contents) {
     );
   }
   if (existingCatalog && existingCatalog !== MERGED_CATALOG_PATH) {
-    throw new Error(`Refusing to replace user-owned model_catalog_json: ${existingCatalog}`);
+    let source = readNativeCatalogSource();
+    if (!source && adoptNativeCatalog) {
+      writeNativeCatalogSource(existingCatalog);
+      source = readNativeCatalogSource();
+    }
+    if (
+      !adoptNativeCatalog ||
+      !source ||
+      !catalogPathsEqual(source.path, existingCatalog)
+    ) {
+      throw new Error(`Refusing to replace user-owned model_catalog_json: ${existingCatalog}`);
+    }
+    rootLines = rootLines.filter((line) => !/^\s*model_catalog_json\s*=/.test(line));
   }
   const managedRealtimeOverrides = [];
   // Codex Voice uses a WebRTC call plus a sideband WebSocket. Keep both on
@@ -636,6 +662,28 @@ function enabledContents(contents) {
   );
 }
 
+function restoreNativeCatalog(contents) {
+  const source = readNativeCatalogSource();
+  if (!source) return { contents, restored: false };
+  const cleaned = clean(contents);
+  const existing = rootValue(cleaned.rootLines, "model_catalog_json");
+  if (existing && existing !== source.path && existing !== MERGED_CATALOG_PATH) {
+    throw new Error(`Refusing to replace user-owned model_catalog_json: ${existing}`);
+  }
+  const rootLines = cleaned.rootLines.filter(
+    (line) => !/^\s*model_catalog_json\s*=/.test(line),
+  );
+  rootLines.push(`model_catalog_json = ${tomlValue(source.path)}`);
+  return {
+    contents: `${[
+      ...trimBlankEdges(rootLines),
+      "",
+      ...trimBlankEdges(cleaned.tableLines),
+    ].join("\n").trimEnd()}\n`,
+    restored: true,
+  };
+}
+
 function atomicWrite(contents) {
   mkdirSync(path.dirname(CONFIG_PATH), { recursive: true, mode: 0o700 });
   const temporary = `${CONFIG_PATH}.tmp.${process.pid}`;
@@ -652,7 +700,7 @@ function atomicWrite(contents) {
 
 if (!new Set(["enable", "disable", "status", "login-free-enable", "login-free-disable"]).has(command)) {
   console.error(
-    "Usage: config-manager.mjs enable|disable|status|login-free-enable|login-free-disable",
+    "Usage: config-manager.mjs enable|disable|status|login-free-enable|login-free-disable [--adopt-native-catalog]",
   );
   process.exit(2);
 }
@@ -665,6 +713,7 @@ if (command === "status") {
 
 let next;
 let pendingProviderModeState;
+let clearNativeCatalogSourceAfterWrite = false;
 if (command === "enable") {
   next = enabledContents(current);
 } else if (command === "login-free-enable") {
@@ -716,12 +765,18 @@ if (command === "enable") {
   if (command === "login-free-disable") {
     next = restored;
   } else {
-    const cleaned = clean(restored);
-    next = `${[
-      ...trimBlankEdges(cleaned.rootLines),
-      "",
-      ...trimBlankEdges(cleaned.tableLines),
-    ].join("\n").trimEnd()}\n`;
+    const nativeCatalog = restoreNativeCatalog(restored);
+    if (nativeCatalog.restored) {
+      next = nativeCatalog.contents;
+      clearNativeCatalogSourceAfterWrite = true;
+    } else {
+      const cleaned = clean(restored);
+      next = `${[
+        ...trimBlankEdges(cleaned.rootLines),
+        "",
+        ...trimBlankEdges(cleaned.tableLines),
+      ].join("\n").trimEnd()}\n`;
+    }
   }
 }
 if (existsSync(CONFIG_PATH) && !existsSync(BACKUP_PATH)) {
@@ -736,4 +791,5 @@ try {
   throw error;
 }
 if (command === "disable" || command === "login-free-disable") clearProviderModeState();
+if (clearNativeCatalogSourceAfterWrite) clearNativeCatalogSource();
 process.stdout.write(`${JSON.stringify(snapshot(next))}\n`);
