@@ -18,6 +18,10 @@ const modelsOption = (() => {
   const index = process.argv.indexOf("--models");
   return index === -1 ? undefined : process.argv[index + 1];
 })();
+const removeOption = (() => {
+  const index = process.argv.indexOf("--remove");
+  return index === -1 ? undefined : process.argv[index + 1];
+})();
 const apply = process.argv.includes("--apply");
 const noApply = process.argv.includes("--no-apply");
 const effortsOption = (() => {
@@ -56,7 +60,7 @@ const REQUEST_PROFILE_DESCRIPTIONS = {
 function usage() {
   console.error(
     "Usage: curate-models.mjs PROVIDER [--models id1,id2 | interactive] " +
-      "[--apply|--no-apply] [--efforts minimal,low,medium,high,xhigh] " +
+      "[--remove id1,id2] [--apply|--no-apply] [--efforts minimal,low,medium,high,xhigh] " +
       `[--request-profile ${Object.keys(REQUEST_PROFILE_DESCRIPTIONS).join("|")}]`,
   );
   process.exit(2);
@@ -74,6 +78,30 @@ export function parseRequestProfile(raw) {
     );
   }
   return profile;
+}
+
+// The additive contract at the heart of curation. `--models` names models to
+// *add*, never the whole desired set, so a kept model survives an add it was
+// not part of; `--remove` is the only non-interactive way a curated model
+// leaves the set; and the interactive picker stays authoritative, its explicit
+// deselection doing the removing. Splitting this from main() keeps the rule
+// testable without a provider round-trip.
+export function planCuration({ mine, chosen, removals, interactive }) {
+  const removalSet = new Set(removals);
+  // Removal runs first so a kept model never collides with a re-added one.
+  const kept = mine.filter((model) => !removalSet.has(model.upstreamModel));
+  // --models: every kept model survives the add, so the surviving set is the
+  // prior curated set. Interactive: the picker's selection is authoritative,
+  // so a kept model survives only while it is still selected; either way a
+  // model that is already curated keeps its stored entry (and its hand-tuned
+  // metadata) instead of being rebuilt with defaults.
+  const chosenSet = new Set(chosen);
+  const surviving = interactive
+    ? kept.filter((model) => chosenSet.has(model.upstreamModel))
+    : kept;
+  const keepUpstream = new Set(surviving.map((model) => model.upstreamModel));
+  const additions = chosen.filter((id) => !keepUpstream.has(id));
+  return { surviving, additions };
 }
 
 export function parseEfforts(raw) {
@@ -182,20 +210,49 @@ async function main() {
   const curated = new Set(mine.map((model) => model.upstreamModel));
   const candidates = [...new Set([...discovery.unregistered, ...curated])].sort();
 
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && !removeOption) {
     process.stdout.write(
       `Every model ${provider.displayName} advertises is already in the registry.\n`,
     );
     return;
   }
 
+  const interactive = !modelsOption && !removeOption && Boolean(process.stdin.isTTY);
+  if (modelsOption && removeOption) {
+    throw new Error(
+      "Use --models to add models or --remove to prune them, not both in one run.",
+    );
+  }
+
+  // --models is additive: it lists models to add, not the whole desired set.
+  // The curated set is per-machine state the user builds up over time, so a
+  // command that silently replaces it would discard entries (and their
+  // hand-tuned metadata) the operator did not name. Removal is its own
+  // explicit flag below; only the interactive picker remains authoritative,
+  // where deselecting a curated model is a deliberate, visible choice.
   const chosen = modelsOption
     ? modelsOption.split(",").map((value) => value.trim()).filter(Boolean)
-    : chooseInteractively(candidates, curated);
-  for (const id of chosen) {
-    if (!candidates.includes(id)) {
+    : interactive
+      ? chooseInteractively(candidates, curated)
+      : [];
+  if (!removeOption) {
+    for (const id of chosen) {
+      if (!candidates.includes(id)) {
+        throw new Error(
+          `${id} is not an available candidate for ${providerId}. Candidates: ${candidates.join(", ")}`,
+        );
+      }
+    }
+  }
+
+  const removals = (removeOption || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const id of removals) {
+    if (!curated.has(id)) {
       throw new Error(
-        `${id} is not an available candidate for ${providerId}. Candidates: ${candidates.join(", ")}`,
+        `${id} is not a curated ${providerId} model. Curated: ${[...curated].join(", ") || "none"}`,
       );
     }
   }
@@ -203,14 +260,11 @@ async function main() {
   const inheritedProfile = MODELS.find(
     (model) => model.provider === providerId && model.requestProfile,
   )?.requestProfile;
-  const byUpstream = new Map(mine.map((model) => [model.upstreamModel, model]));
 
   // Metadata comes from the user, not from any online catalog: which models
   // exist is decided by the provider's own /v1/models endpoint above, and the
   // sizing/effort details are asked interactively (or default conservatively
   // in --models mode). Existing curated entries are never touched.
-  const interactive = !modelsOption && Boolean(process.stdin.isTTY);
-
   const metadataFor = (id) => {
     const metadata = { ...(flagEfforts || {}) };
     if (!interactive) return flagEfforts ? metadata : undefined;
@@ -256,20 +310,22 @@ async function main() {
       : undefined;
   };
 
-  const nextMine = chosen.map((id, index) => {
-    const existing = byUpstream.get(id);
-    if (existing) return existing;
-    // Ask for the metadata before the profile so the interactive prompts stay
-    // under the one "Metadata for ID" heading in the order they are printed.
-    const metadata = metadataFor(id);
-    return userModelEntry({
-      providerId,
-      upstreamId: id,
-      requestProfile: requestProfileFor(id),
-      priority: 100 + index,
-      metadata,
-    });
-  });
+  const { surviving, additions } = planCuration({ mine, chosen, removals, interactive });
+  const nextMine = [
+    ...surviving,
+    ...additions.map((id, index) => {
+      // Ask for the metadata before the profile so the interactive prompts stay
+      // under the one "Metadata for ID" heading in the order they are printed.
+      const metadata = metadataFor(id);
+      return userModelEntry({
+        providerId,
+        upstreamId: id,
+        requestProfile: requestProfileFor(id),
+        priority: 100 + mine.length + index,
+        metadata,
+      });
+    }),
+  ];
   const target = writeUserModels([...others, ...nextMine]);
   const added = nextMine.filter((model) => !curated.has(model.upstreamModel)).length;
   const removed = mine.length - (nextMine.length - added);

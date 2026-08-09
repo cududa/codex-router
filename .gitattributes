@@ -5,7 +5,16 @@
 # these files as text, so the damage showed up there first.
 *.sh text eol=lf
 
+# Normalize every other text file to LF in the repository so a Windows checkout
+# with core.autocrlf=true does not flag (or commit) CRLF conversions on files
+# that were never meant to carry them. `text=auto` lets Git decide what is
+# text; the explicit `eol=lf` keeps the stored form LF regardless of the
+# contributor's platform or global autocrlf setting.
+* text=auto eol=lf
+
 # The PowerShell entry points are the mirror image: they are executed by Windows
-# and are conventionally CRLF, but nothing here depends on their endings, so
-# they are normalized in the repository and left to the platform on checkout.
-*.ps1 text
+# and are conventionally CRLF. Nothing here depends on their endings, so they
+# are stored normalized (LF) but checked out per the platform. Declared after
+# the catch-all with `eol` unset so the attribute (last match wins) drops the
+# forced LF and lets core.autocrlf/core.eol decide the checkout form.
+*.ps1 text -eol
