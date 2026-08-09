@@ -7,11 +7,82 @@ import test from "node:test";
 // coverage of any kind.
 const savedArgv = [...process.argv];
 process.argv = [process.argv[0], "curate-models.mjs", "gemini-api"];
-const { parseEfforts, parseRequestProfile, renderRows } = await import(
+const { parseEfforts, parseRequestProfile, planCuration, renderRows } = await import(
   "../src/curate-models.mjs"
 );
 process.argv = savedArgv;
 process.exitCode = 0;
+
+const curated = (upstreamModel) => ({
+  slug: `fireworks/${upstreamModel.split("/").pop()}`,
+  upstreamModel,
+  provider: "fireworks",
+});
+
+test("an additive --models run keeps the curated models it did not name", () => {
+  // The regression this guards: --models used to replace the whole curated set
+  // with only the ids passed, silently discarding entries (and their metadata).
+  const mine = [curated("accounts/fireworks/models/kimi-k3")];
+  const { surviving, additions } = planCuration({
+    mine,
+    chosen: ["accounts/fireworks/models/deepseek-v4-flash-0731"],
+    removals: [],
+    interactive: false,
+  });
+  assert.deepEqual(
+    surviving.map((model) => model.upstreamModel),
+    ["accounts/fireworks/models/kimi-k3"],
+  );
+  assert.deepEqual(additions, ["accounts/fireworks/models/deepseek-v4-flash-0731"]);
+});
+
+test("an additive --models run does not re-add an already-curated model", () => {
+  // Re-adding a curated model must keep its stored entry rather than rebuild it
+  // with default metadata, so hand-tuned values survive a redundant add.
+  const mine = [curated("accounts/fireworks/models/kimi-k3")];
+  const { surviving, additions } = planCuration({
+    mine,
+    chosen: ["accounts/fireworks/models/kimi-k3"],
+    removals: [],
+    interactive: false,
+  });
+  assert.deepEqual(surviving.map((model) => model.upstreamModel), [
+    "accounts/fireworks/models/kimi-k3",
+  ]);
+  assert.deepEqual(additions, []);
+});
+
+test("--remove prunes only the named models", () => {
+  const mine = [
+    curated("accounts/fireworks/models/kimi-k3"),
+    curated("accounts/fireworks/models/deepseek-v4-flash-0731"),
+  ];
+  const { surviving, additions } = planCuration({
+    mine,
+    chosen: [],
+    removals: ["accounts/fireworks/models/deepseek-v4-flash-0731"],
+    interactive: false,
+  });
+  assert.deepEqual(surviving.map((model) => model.upstreamModel), [
+    "accounts/fireworks/models/kimi-k3",
+  ]);
+  assert.deepEqual(additions, []);
+});
+
+test("the interactive picker stays authoritative and preserves kept metadata", () => {
+  // Deselecting in the picker removes; a model that stays selected keeps its
+  // stored entry, and only newly selected ids become additions.
+  const kept = curated("accounts/fireworks/models/kimi-k3");
+  const dropped = curated("accounts/fireworks/models/deepseek-v4-flash-0731");
+  const { surviving, additions } = planCuration({
+    mine: [kept, dropped],
+    chosen: ["accounts/fireworks/models/kimi-k3", "accounts/fireworks/models/glm-5p2"],
+    removals: [],
+    interactive: true,
+  });
+  assert.deepEqual(surviving, [kept]);
+  assert.deepEqual(additions, ["accounts/fireworks/models/glm-5p2"]);
+});
 
 test("efforts are returned in the documented order, not the order typed", () => {
   // The stored model advertises these to the picker, where an arbitrary order

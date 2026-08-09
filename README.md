@@ -152,9 +152,13 @@ the ones you want, and stores them as user models in protected state
 command and deselecting). Curation asks for each new model's context window,
 image support, and reasoning efforts — so curated models get the effort
 switcher in the picker — and everything defaults conservatively when
-unanswered (`--efforts minimal,low,medium,high,xhigh` sets the ladder in the
-non-interactive `--models` form; every value stays editable in
-`user-models.json`). It also asks whether the model rejects a forced
+unanswered. The non-interactive `--models id1,id2` form is **additive**: it
+adds the named models to the curated set without disturbing the ones already
+there, and `--efforts minimal,low,medium,high,xhigh` sets their effort ladder
+(every value stays editable in `user-models.json`). To drop a curated model
+non-interactively, use `--remove id1,id2` — `--models` never removes, so an
+add-only run cannot silently discard entries you did not name. Curation also
+asks whether the model rejects a forced
 `tool_choice`: a few upstreams call tools happily when the choice is `auto`
 but answer HTTP 400 when one is required, which fails the compatibility check
 and the routed-subagent handoff even though tool calling works. Answering yes
