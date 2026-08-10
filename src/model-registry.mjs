@@ -314,6 +314,28 @@ function modelProblem(model, providers, slugs, gatewayModels) {
   ) {
     return `model ${model.slug} has an invalid searchTool`;
   }
+  // Service tiers are the Codex picker entries that let a request carry a
+  // `service_tier` field through to the provider (e.g. Fireworks' "priority"
+  // tier). Only ids the provider actually honors may be declared: an
+  // advertised tier the upstream rejects turns a picker choice into a routing
+  // error, so absent means no tiers and each entry must name a non-empty id.
+  if (
+    model.serviceTiers !== undefined &&
+    (!Array.isArray(model.serviceTiers) ||
+      model.serviceTiers.some(
+        (tier) =>
+          !tier ||
+          typeof tier !== "object" ||
+          Array.isArray(tier) ||
+          typeof tier.id !== "string" ||
+          !tier.id.trim() ||
+          typeof tier.name !== "string" ||
+          !tier.name.trim() ||
+          (tier.description !== undefined && typeof tier.description !== "string"),
+      ))
+  ) {
+    return `model ${model.slug} has an invalid serviceTiers`;
+  }
   if (
     model.defaultReasoningSummary !== undefined &&
     !["auto", "concise", "detailed"].includes(model.defaultReasoningSummary)

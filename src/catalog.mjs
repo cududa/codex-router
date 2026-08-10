@@ -261,7 +261,19 @@ export function routedModel(template, model) {
     input_modalities: model.inputModalities,
     comp_hash: model.compHash,
     additional_speed_tiers: [],
-    service_tiers: [],
+    // Advertised service tiers come from the registry entry, never from the
+    // native template: a tier the provider does not honor would let the picker
+    // attach a `service_tier` the upstream rejects. Absent stays an empty list
+    // so the client sends no tier for that model.
+    service_tiers: Array.isArray(model.serviceTiers)
+      ? model.serviceTiers.map((tier) => {
+          const entry = { id: tier.id.trim(), name: tier.name.trim() };
+          if (typeof tier.description === "string" && tier.description.trim()) {
+            entry.description = tier.description.trim();
+          }
+          return entry;
+        })
+      : [],
     // Codex surfaces this once per slug (up to its own show cap) as the
     // "Introducing {model}" announcement; absent copy must stay null so the
     // client never renders an empty card.
